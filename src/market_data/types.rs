@@ -2,26 +2,26 @@
 
 use std::time::{SystemTime, Duration};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Venue {
     Polymarket,
     Kalshi
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Side {
     Buy,
     Sell
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum MarketEventKind {
     Trade{price: f64, size: f64, side: Side},
     TopOfBook{bid_price: f64, bid_size: f64, ask_price: f64, ask_size: f64},
     Heartbeat
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct MarketEvent {
     pub venue: Venue,
     pub kind: MarketEventKind,

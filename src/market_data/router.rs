@@ -1,25 +1,24 @@
 use tokio::sync::mpsc;
 use tokio::time::{sleep, Duration};
-
-use crate::market_data::types::{MarketEvent, MarketEventKind, Venue};
-use std::time::SystemTime;
-
+use std::collections::HashMap;
+use crate::market_data::types::{MarketEvent, Venue};
+use crate::market_data::market_worker::run_market_worker;
 
 pub async fn run_router(mut rx: mpsc::Receiver<MarketEvent>) -> anyhow::Result<()> {
+    let mut lanes: HashMap<Venue, mpsc::Sender<MarketEvent>> = HashMap::new();
 
     tokio::spawn(async move {
 
         while let Some(mut event) = rx.recv().await {
-            match event.ts_exchange_ms {
-                Some(ts) => {
-                    let time_elapsed = SystemTime::now().duration_since(ts).unwrap_or_else(|_| Duration::from_secs(0));
-                    event.ts_receive_ms = Some(time_elapsed);
-                },
-                None => {
-                    println!("No exchange timestamp");
-                }
+
+            if !lanes.contains_key(&event.venue) {
+                let (lane_tx, mut lane_rx) = mpsc::channel(100);
+                tokio::spawn(run_market_worker(lane_rx));
+                lanes.insert(event.venue.clone(), lane_tx);
             }
-            println!("Received event: {:?}", event);
+
+            lanes[&event.venue].send(event).await.unwrap();
+
         }
     });
 

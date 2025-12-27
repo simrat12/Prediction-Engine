@@ -32,5 +32,6 @@ async fn main() -> Result<()> {
 
     market_data::router::run_router(rx).await?;
 
+
     Ok(())
 }
