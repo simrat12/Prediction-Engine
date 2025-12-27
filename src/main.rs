@@ -2,6 +2,9 @@ mod config;
 pub use tracing_subscriber::filter::EnvFilter;
 pub use anyhow::Result;
 pub use tracing::{info, warn};
+mod market_data;
+use tokio::sync::mpsc;
+
 
 fn init_tracing() {
 
@@ -22,6 +25,12 @@ async fn main() -> Result<()> {
 
     let x = handle.await?;
     info!(x, "done");
+
+    let (tx, mut rx) = mpsc::channel(100);
+
+    market_data::adapters::polymarket::run_polymarket_adapter(tx).await?;
+
+    market_data::router::run_router(rx).await?;
 
     Ok(())
 }
