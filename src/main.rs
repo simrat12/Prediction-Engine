@@ -3,6 +3,7 @@ pub use tracing_subscriber::filter::EnvFilter;
 pub use anyhow::Result;
 pub use tracing::{info, warn};
 mod market_data;
+mod state;
 use tokio::sync::mpsc;
 
 
