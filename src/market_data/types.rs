@@ -28,4 +28,9 @@ pub struct MarketEvent {
     pub market_id: String,
     pub ts_exchange_ms: Option<SystemTime>,
     pub ts_receive_ms: Option<Duration>,
+    pub volume24h: Option<f64>,
+    pub last_trade_price: Option<f64>,
+    pub liquidity: Option<f64>,
+    pub best_bid: Option<f64>,
+    pub best_ask: Option<f64>,
 }

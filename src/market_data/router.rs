@@ -20,10 +20,7 @@ pub async fn run_router(mut rx: mpsc::Receiver<MarketEvent>) -> anyhow::Result<(
             lanes[&event.venue].send(event).await.unwrap();
 
         }
-    });
-
-
-    sleep(Duration::from_secs(3)).await;
+    }).await?;
 
     Ok(())
 }
