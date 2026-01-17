@@ -42,33 +42,33 @@ cargo run
 ┌─────────────────────────────┐
 │ router.rs                   │
 │─────────────────────────────│
-│ - lanes per venue            │
-│ - spawn market_worker        │
-│ - forward events             │
+│ - lanes per venue           │
+│ - spawn market_worker       │
+│ - forward events            │
 └──────────┬──────────────────┘
            │ lanes[venue].send(event)
            ▼
 ┌─────────────────────────────┐
-│ market_worker.rs             │
+│ market_worker.rs            │
 │─────────────────────────────│
-│ - receive venue events       │
-│ - merge latest snapshot      │
-│ - write to cache             │
+│ - receive venue events      │
+│ - merge latest snapshot     │
+│ - write to cache            │
 └──────────┬──────────────────┘
            ▼
 ┌─────────────────────────────┐
-│ state/market_cache.rs        │
+│ state/market_cache.rs       │
 │─────────────────────────────│
-│ Arc<RwLock<HashMap<           │
-│   (venue, market_id),        │
-│   MarketState                │
-│ >>                            │
+│ Arc<RwLock<HashMap<         │
+│   (venue, market_id),       │
+│   MarketState               │
+│ >>                          │
 └──────────┬──────────────────┘
            ▼
 ┌─────────────────────────────┐
-│ strategy / execution         │
+│ strategy / execution        │
 │─────────────────────────────│
-│ - read cache                 │
-│ - decide trades              │
+│ - read cache                │
+│ - decide trades             │
 └─────────────────────────────┘
 
