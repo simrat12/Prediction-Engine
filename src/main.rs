@@ -7,6 +7,11 @@ pub use tracing::{info, warn};
 mod market_data;
 mod state;
 use tokio::sync::mpsc;
+use market_data::router;
+use market_data::types::Venue;
+use state::market_cache::{MarketCache, MarketKey};
+use tokio::sync::RwLock;
+
 
 
 fn init_tracing() {
@@ -31,11 +36,19 @@ async fn main() -> Result<()> {
 
     let (tx, mut rx) = mpsc::channel(100);
 
-    let handle = Arc::new(tokio::sync::RwLock::new(state::market_cache::MarketCache::new()));
+    let state = state::market_cache::MarketCache::new();
+
+    let handle = Arc::new(tokio::sync::RwLock::new(state));
 
     tokio::spawn(market_data::adapters::polymarket::run_polymarket_adapter(tx));
 
-    market_data::router::run_router(rx, handle).await?;
+    market_data::router::run_router(rx, handle.clone()).await?;
+
+    let guard = handle.read().await;
+
+    let markets = guard.get_markets_by_venue(&market_data::types::Venue::Polymarket);
+
+    print!("Interesting markets are the following: {:?}", markets);
 
 
     Ok(())
