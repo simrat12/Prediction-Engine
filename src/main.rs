@@ -42,7 +42,7 @@ async fn main() -> Result<()> {
 
     tokio::spawn(market_data::adapters::polymarket::run_polymarket_adapter(tx));
 
-    market_data::router::run_router(rx, handle.clone()).await?;
+    tokio::spawn(market_data::router::run_router(rx, handle.clone()));
 
     let guard = handle.read().await;
 
