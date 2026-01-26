@@ -1,3 +1,5 @@
+#![allow(warnings)] 
+
 use tokio::sync::mpsc;
 use std::time::{SystemTime, Duration};
 use crate::market_data::types::MarketEvent;

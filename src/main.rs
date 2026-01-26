@@ -1,3 +1,5 @@
+#![allow(warnings)] 
+
 mod config;
 use std::sync::Arc;
 
@@ -44,11 +46,13 @@ async fn main() -> Result<()> {
 
     tokio::spawn(market_data::router::run_router(rx, handle.clone()));
 
-    let guard = handle.read().await;
-
-    let markets = guard.get_markets_by_venue(&market_data::types::Venue::Polymarket);
-
-    print!("Interesting markets are the following: {:?}", markets);
+    // periodically print what’s in cache
+    loop {
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        let guard = handle.read().await;
+        let markets = guard.get_markets_by_venue(&Venue::Polymarket);
+        println!("cached polymarket markets = {}", markets.len());
+    }
 
 
     Ok(())
