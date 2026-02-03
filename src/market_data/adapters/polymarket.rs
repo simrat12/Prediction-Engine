@@ -17,7 +17,7 @@ use polymarket_rs::types::GammaMarket;
 
 
 fn is_clob_tradable(m: &GammaMarket) -> bool {
-    if !m.active {
+    if !m.active || m.closed || m.archived  {
         return false;
     }
 
@@ -31,7 +31,7 @@ fn is_clob_tradable(m: &GammaMarket) -> bool {
         None => return false,
     };
 
-    let prices: Vec<f64> = serde_json::from_str::<Vec<String>>(raw_prices)
+    let prices: Vec<f64> = serde_json::from_str::<Vec<String>>(raw_prices)  
         .ok()
         .map(|v| {
             v.into_iter()
@@ -53,6 +53,16 @@ fn is_clob_tradable(m: &GammaMarket) -> bool {
         return false;
     }
 
+    let volume24h = m.volume24hr.unwrap_or(0.0);
+    if volume24h < 100000.0 {
+        return false;
+    }
+
+    let liquidity = m.liquidity_num.unwrap_or(0.0);
+    if liquidity < 10000.0 {
+        return false;
+    }
+
     true
 }
 
@@ -69,9 +79,18 @@ pub async fn run_polymarket_adapter(tx: mpsc::Sender<MarketEvent>) -> anyhow::Re
 
     // Get active markets
     let params = GammaMarketParams::new()
-        .with_active(true);
+    .with_active(true)
+    .with_closed(false)
+    .with_archived(false)
+    .with_limit(500);
+
 
     let markets = client.get_markets(Some(params)).await?;
+
+    println!("Total markets fetched: {}", markets.len());
+
+    // println!("all markets are here:{:?}", &markets);
+
     let clob_markets: Vec<_> = markets
     .into_iter()
     .filter(|m| is_clob_tradable(m))
@@ -86,10 +105,10 @@ pub async fn run_polymarket_adapter(tx: mpsc::Sender<MarketEvent>) -> anyhow::Re
 
     for i in 0..clob_markets.len() {
 
-        if clob_markets[i].clob_token_ids.is_none() {
-            println!("{} skipped: no CLOB tokens", clob_markets[i].id);
-            continue;
-        }
+        // if clob_markets[i].clob_token_ids.is_none() {
+        //     println!("{} skipped: no CLOB tokens", clob_markets[i].id);
+        //     continue;
+        // }
 
         let volume = clob_markets[i]
         .volume
@@ -99,70 +118,62 @@ pub async fn run_polymarket_adapter(tx: mpsc::Sender<MarketEvent>) -> anyhow::Re
         .unwrap_or(0.0);
 
         println!("Market {}: volume = {}", clob_markets[i].id, volume);
-        
-        if volume > 100000.0 {
 
-            let raw = clob_markets[i].clob_token_ids.as_deref().unwrap();
-            let question = &clob_markets[i].question;
-            let ids: Vec<String> = serde_json::from_str(raw)?;
-            eligibleTokenIds.extend(ids.clone());
-            questionTokenIds.insert(clob_markets[i].id.clone(), question.to_string());
+        let raw = clob_markets[i].clob_token_ids.as_deref().unwrap();
+        let question = &clob_markets[i].question;
+        let ids: Vec<String> = serde_json::from_str(raw)?;
+        eligibleTokenIds.extend(ids.clone());
+        questionTokenIds.insert(clob_markets[i].id.clone(), question.to_string());
 
-            let token_id = match ids.first() {
-                Some(id) => id.clone(),
-                None => {
-                    println!("No token IDs found for market {}", clob_markets[i].id);
-                    continue;
-                }
-            };
-
-            let event = MarketEvent {
-                venue: Venue::Polymarket,
-                kind: MarketEventKind::Heartbeat,
-                market_id: clob_markets[i].id.clone(),
-                ts_exchange_ms: Some(SystemTime::now()),
-                ts_receive_ms: None,
-                volume24h: Some(volume),
-                last_trade_price: clob_markets[i].last_trade_price,
-                liquidity: clob_markets[i].liquidity.as_ref().and_then(|l| l.parse::<f64>().ok()), 
-                best_bid: clob_markets[i].best_bid,
-                best_ask: clob_markets[i].best_ask,
-            };
-
-            let buy_price = match clobClient.get_price(&TokenId::from(token_id.clone()), Side::Buy).await {
-                Ok(buy_price) => buy_price,
-                Err(e) => {
-                    println!("Error fetching price: {:?}", e);
-                    continue;
-                }
-            };
-
-            let sell_price = match clobClient.get_price(&TokenId::from(token_id), Side::Sell).await {
-                Ok(sell_price) => sell_price,
-                Err(e) => {
-                    println!("Error fetching price: {:?}", e);
-                    continue;
-                }
-            };
-
-            println!("Market {}: Buy Price: {}, Sell Price: {}", clob_markets[i].id, buy_price.price, sell_price.price);
-
-            if buy_price.price + sell_price.price > Decimal::from(1) {
-                println!("Arbitrage opportunity detected on market {}: Buy at {}, Sell at {}", clob_markets[i].id, buy_price.price, sell_price.price);
+        let token_id = match ids.first() {
+            Some(id) => id.clone(),
+            None => {
+                println!("No token IDs found for market {}", clob_markets[i].id);
+                continue;
             }
+        };
 
-            if tx.send(event).await.is_err() {
-                println!("channel closed");
-            } else {
-                println!("Sent event");
+        let event = MarketEvent {
+            venue: Venue::Polymarket,
+            kind: MarketEventKind::Heartbeat,
+            market_id: clob_markets[i].id.clone(),
+            ts_exchange_ms: Some(SystemTime::now()),
+            ts_receive_ms: None,
+            volume24h: Some(volume),
+            last_trade_price: clob_markets[i].last_trade_price,
+            liquidity: clob_markets[i].liquidity.as_ref().and_then(|l| l.parse::<f64>().ok()), 
+            best_bid: clob_markets[i].best_bid,
+            best_ask: clob_markets[i].best_ask,
+        };
+
+        let buy_price = match clobClient.get_price(&TokenId::from(token_id.clone()), Side::Buy).await {
+            Ok(buy_price) => buy_price,
+            Err(e) => {
+                println!("Error fetching price: {:?}", e);
+                continue;
             }
-        } else {
-            println!(
-                "Market {} filtered out due to low volume (volume: {}).",
-                clob_markets[i].id,
-                clob_markets[i].volume.as_ref().unwrap_or(&"0.0".to_string())
-            );
+        };
+
+        let sell_price = match clobClient.get_price(&TokenId::from(token_id), Side::Sell).await {
+            Ok(sell_price) => sell_price,
+            Err(e) => {
+                println!("Error fetching price: {:?}", e);
+                continue;
+            }
+        };
+
+        println!("Market {}: Buy Price: {}, Sell Price: {}", clob_markets[i].id, buy_price.price, sell_price.price);
+
+        if buy_price.price + sell_price.price > Decimal::from(1) {
+            println!("Arbitrage opportunity detected on market {}: Buy at {}, Sell at {}", clob_markets[i].id, buy_price.price, sell_price.price);
         }
+
+        if tx.send(event).await.is_err() {
+            println!("channel closed");
+        } else {
+            println!("Sent event");
+        }
+ 
 
         // println!("markets are here:{:?}", &markets[0..10]);
     
