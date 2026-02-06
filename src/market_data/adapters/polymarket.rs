@@ -102,6 +102,7 @@ pub async fn run_polymarket_adapter(tx: mpsc::Sender<MarketEvent>) -> anyhow::Re
 
 
     let mut eligibleTokenIds: Vec<String> = Vec::new();
+    let mut eligibleCLOBToGammaMarketIds: HashMap<String, String> = HashMap::new();
     let mut questionTokenIds: HashMap<String, String> = HashMap::new();
 
 
@@ -124,7 +125,14 @@ pub async fn run_polymarket_adapter(tx: mpsc::Sender<MarketEvent>) -> anyhow::Re
         let raw = clob_markets[i].clob_token_ids.as_deref().unwrap();
         let question = &clob_markets[i].question;
         let ids: Vec<String> = serde_json::from_str(raw)?;
-        eligibleTokenIds.extend(ids.clone());
+        for token_id in &ids {
+            eligibleTokenIds.push(token_id.clone());
+            eligibleCLOBToGammaMarketIds.insert(
+                token_id.clone(),
+                clob_markets[i].id.clone(),
+            );
+        }
+
         questionTokenIds.insert(clob_markets[i].id.clone(), question.to_string());
 
         let token_id = match ids.first() {
@@ -201,7 +209,7 @@ pub async fn run_polymarket_adapter(tx: mpsc::Sender<MarketEvent>) -> anyhow::Re
                         let event = MarketEvent {
                             venue: Venue::Polymarket,
                             kind: MarketEventKind::PriceChange,
-                            market_id: priceChange.market.clone(),
+                            market_id: eligibleCLOBToGammaMarketIds.get(&priceChange.market).cloned().unwrap_or(priceChange.market.clone()),
                             ts_exchange_ms: None,
                             ts_receive_ms: None,
                             volume24h: None,
