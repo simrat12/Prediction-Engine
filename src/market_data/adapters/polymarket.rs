@@ -1,10 +1,11 @@
 #![allow(warnings)] 
 
 use tokio::sync::mpsc;
+use tracing::event;
 
 use crate::market_data::{adapters::polymarket, types::{MarketEvent, MarketEventKind, Venue}};
 use std::{collections::HashMap, time::SystemTime};
-use polymarket_rs::client::GammaClient;
+use polymarket_rs::{client::GammaClient, types::WsEvent, websocket};
 use polymarket_rs::request::GammaMarketParams;
 use polymarket_rs;
 use polymarket_rs::ClobClient;
@@ -14,6 +15,7 @@ use polymarket_rs::websocket::MarketWsClient;
 use rust_decimal::Decimal;
 use polymarket_rs::StreamExt;
 use polymarket_rs::types::GammaMarket;
+use rust_decimal::prelude::ToPrimitive;
 
 
 fn is_clob_tradable(m: &GammaMarket) -> bool {
@@ -192,7 +194,31 @@ pub async fn run_polymarket_adapter(tx: mpsc::Sender<MarketEvent>) -> anyhow::Re
     while let Some(message) = stream.next().await {
         match message {
             Ok(update) => {
-                println!("Received market update: {:?}", update);
+                match update {
+                    WsEvent::PriceChange(priceChange) => {
+                        println!("Received Price change event for market: {}", priceChange.market);
+                        // Process snapshot as needed
+                        let event = MarketEvent {
+                            venue: Venue::Polymarket,
+                            kind: MarketEventKind::PriceChange,
+                            market_id: priceChange.market.clone(),
+                            ts_exchange_ms: None,
+                            ts_receive_ms: None,
+                            volume24h: None,
+                            last_trade_price: None,
+                            liquidity: None,
+                            best_bid: priceChange.price_changes.iter().find(|pc| pc.side == Side::Buy).and_then(|pc| pc.price.to_f64()),
+                            best_ask: priceChange.price_changes.iter().find(|pc| pc.side == Side::Sell).and_then(|pc| pc.price.to_f64()),
+                        };
+
+                        if tx.send(event).await.is_err() {
+                            println!("channel closed");
+                        } else {
+                            println!("Sent PriceChange event for market: {}", priceChange.market);
+                        }
+                    }
+                    _ => {}
+                }
             }
             Err(e) => {
                 println!("Error receiving market update: {:?}", e);

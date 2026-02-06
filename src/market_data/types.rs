@@ -18,7 +18,8 @@ pub enum Side {
 pub enum MarketEventKind {
     Trade{price: f64, size: f64, side: Side},
     TopOfBook{bid_price: f64, bid_size: f64, ask_price: f64, ask_size: f64},
-    Heartbeat
+    Heartbeat,
+    PriceChange
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -13,6 +13,7 @@ use market_data::router;
 use market_data::types::Venue;
 use state::market_cache::{MarketCache, MarketKey};
 use tokio::sync::RwLock;
+use market_data::adapters::polymarket;
 
 
 
@@ -40,10 +41,10 @@ async fn main() -> Result<()> {
 
     let state = state::market_cache::MarketCache::new();
 
-    let handle = Arc::new(tokio::sync::RwLock::new(state));
+    let handle = Arc::new(RwLock::new(state));
 
-    let pm_handle = tokio::spawn(market_data::adapters::polymarket::run_polymarket_adapter(tx));
-    let router_handle = tokio::spawn(market_data::router::run_router(rx, handle.clone()));
+    let pm_handle = tokio::spawn(polymarket::run_polymarket_adapter(tx));
+    let router_handle = tokio::spawn(router::run_router(rx, handle.clone()));
 
     // periodically print what’s in cache
     // loop {
