@@ -1,45 +1,51 @@
 use crate::state::market::MarketState;
 use crate::market_data::types::Venue;
-use std::collections::HashMap;
+use dashmap::DashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
-
-#[derive(Clone, Debug)]
-pub struct MarketCache {
-    cache: HashMap<MarketKey, MarketState>,
-}
 
 #[derive(Eq, Hash, PartialEq, Clone, Debug)]
-pub struct MarketKey (
+pub struct MarketKey(
     pub Venue,
     pub String, // market_id
 );
 
+/// Thread-safe market cache backed by DashMap.
+/// Eliminates write-lock contention: concurrent writers on different keys
+/// never block each other, and readers are never blocked by writers.
+#[derive(Clone, Debug)]
+pub struct MarketCache {
+    cache: Arc<DashMap<MarketKey, MarketState>>,
+}
+
+/// Shared handle to the cache — just a cheap Arc clone.
+pub type MarketCacheHandle = MarketCache;
+
 impl MarketCache {
     pub fn new() -> Self {
         MarketCache {
-            cache: HashMap::new(),
+            cache: Arc::new(DashMap::new()),
         }
     }
 
-    pub fn update_market_state(&mut self, key: MarketKey, state: MarketState) {
+    pub fn update_market_state(&self, key: MarketKey, state: MarketState) {
         self.cache.insert(key, state);
     }
 
-    pub fn get_market_state(&self, key: &MarketKey) -> Option<&MarketState> {
-        self.cache.get(key)
+    pub fn get_market_state(&self, key: &MarketKey) -> Option<MarketState> {
+        self.cache.get(key).map(|entry| entry.value().clone())
     }
 
-    pub fn get_markets_by_venue(&self, venue: &Venue) -> Vec<(&MarketKey, &MarketState)> {
-        self.cache.iter()
-            .filter(|(key, _)| &key.0 == venue)
+    pub fn get_markets_by_venue(&self, venue: &Venue) -> Vec<(MarketKey, MarketState)> {
+        self.cache
+            .iter()
+            .filter(|entry| &entry.key().0 == venue)
+            .map(|entry| (entry.key().clone(), entry.value().clone()))
             .collect()
     }
 }
 
-type MarketCacheHandle = Arc<RwLock<MarketCache>>;
-
-pub async fn insert(handle: &MarketCacheHandle, key: MarketKey, state: MarketState) {
-    let mut cache = handle.write().await;
-    cache.update_market_state(key, state);
+/// Insert or update a market state in the cache.
+/// No async lock required — DashMap handles synchronization internally.
+pub fn insert(handle: &MarketCacheHandle, key: MarketKey, state: MarketState) {
+    handle.update_market_state(key, state);
 }
