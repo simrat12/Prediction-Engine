@@ -6,7 +6,7 @@ use tracing::{info, warn, debug, error};
 use crate::market_data::types::{MarketEvent, MarketEventKind, Venue};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, SystemTime};
 use futures::stream::{self, StreamExt as FuturesStreamExt};
 use polymarket_rs::client::GammaClient;
 use polymarket_rs::types::{GammaMarket, WsEvent};
@@ -287,14 +287,12 @@ async fn run_ws_loop(
 
         // Process messages from the stream
         while let Some(message) = stream.next().await {
-            let receive_ts = Instant::now();
-
             match message {
                 Ok(WsEvent::PriceChange(price_change)) => {
-                    let market_id = clob_to_gamma
-                        .get(&price_change.market)
-                        .cloned()
-                        .unwrap_or_else(|| price_change.market.clone());
+                    let Some(market_id) = clob_to_gamma.get(&price_change.market).cloned() else {
+                        warn!(token = %price_change.market, "unknown token id from WS");
+                        continue;
+                    };
 
                     debug!(
                         ws_token = %price_change.market,
@@ -307,7 +305,7 @@ async fn run_ws_loop(
                         kind: MarketEventKind::PriceChange,
                         market_id,
                         ts_exchange_ms: None,
-                        ts_receive_ms: Some(receive_ts.elapsed()),
+                        ts_receive_ms: Some(SystemTime::now()),
                         volume24h: None,
                         last_trade_price: None,
                         liquidity: None,

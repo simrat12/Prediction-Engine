@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use std::time::{SystemTime, Duration};
+use std::time::SystemTime;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Venue {
@@ -28,7 +28,7 @@ pub struct MarketEvent {
     pub kind: MarketEventKind,
     pub market_id: String,
     pub ts_exchange_ms: Option<SystemTime>,
-    pub ts_receive_ms: Option<Duration>,
+    pub ts_receive_ms: Option<SystemTime>,
     pub volume24h: Option<f64>,
     pub last_trade_price: Option<f64>,
     pub liquidity: Option<f64>,

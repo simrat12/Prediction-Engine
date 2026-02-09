@@ -31,6 +31,15 @@ impl MarketCache {
         self.cache.insert(key, state);
     }
 
+    /// Merge a partial update into an existing entry, or insert if none exists.
+    /// Only overwrites fields that are `Some` in the incoming state.
+    pub fn update_partial(&self, key: MarketKey, update: MarketState) {
+        self.cache
+            .entry(key)
+            .and_modify(|existing| existing.merge(&update))
+            .or_insert(update);
+    }
+
     pub fn get_market_state(&self, key: &MarketKey) -> Option<MarketState> {
         self.cache.get(key).map(|entry| entry.value().clone())
     }
@@ -44,8 +53,9 @@ impl MarketCache {
     }
 }
 
-/// Insert or update a market state in the cache.
+/// Merge a partial market state update into the cache.
+/// Only overwrites fields present in the incoming event; preserves existing values otherwise.
 /// No async lock required — DashMap handles synchronization internally.
 pub fn insert(handle: &MarketCacheHandle, key: MarketKey, state: MarketState) {
-    handle.update_market_state(key, state);
+    handle.update_partial(key, state);
 }
