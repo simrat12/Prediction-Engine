@@ -12,6 +12,8 @@ use market_data::router;
 use market_data::types::Venue;
 use state::market_cache::MarketCache;
 use market_data::adapters::polymarket;
+use metrics::prometheus::Metrics;
+mod metrics;
 
 /// Main adapter→router channel buffer.
 /// Sized to absorb WebSocket bursts without back-pressuring the adapter.
@@ -26,6 +28,7 @@ fn init_tracing() {
 #[tokio::main]
 async fn main() -> Result<()> {
     init_tracing();
+    metrics::init_metrics();
 
     info!("prediction-engine starting");
 
