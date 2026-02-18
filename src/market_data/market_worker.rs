@@ -6,11 +6,14 @@ use crate::market_data::types::MarketEvent;
 use crate::state::market::MarketState;
 use crate::state::market_cache::{MarketCache, MarketKey, insert};
 
-pub async fn run_market_worker(mut rx: mpsc::Receiver<MarketEvent>, handle: MarketCache) -> anyhow::Result<()> {
+pub async fn run_market_worker(
+    mut rx: mpsc::Receiver<MarketEvent>,
+    handle: MarketCache,
+    notify_tx: mpsc::Sender<MarketKey>,
+) -> anyhow::Result<()> {
     while let Some(event) = rx.recv().await {
         let key = MarketKey(event.venue.clone(), event.market_id.clone());
 
-        // Build state directly from event fields — no redundant full-event clone
         let state = MarketState {
             best_bid: event.best_bid,
             best_ask: event.best_ask,
@@ -23,8 +26,11 @@ pub async fn run_market_worker(mut rx: mpsc::Receiver<MarketEvent>, handle: Mark
             "updating cache"
         );
 
-        // Synchronous insert — DashMap handles concurrency internally
-        insert(&handle, key, state);
+        insert(&handle, key.clone(), state);
+
+        // Notify strategy engine — non-blocking so the data path
+        // never stalls on a slow strategy consumer.
+        let _ = notify_tx.try_send(key);
     }
 
     Ok(())
