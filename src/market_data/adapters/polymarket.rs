@@ -1,6 +1,7 @@
 #![allow(warnings)]
 
 use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 use tracing::{info, warn, debug, error};
 
 use crate::market_data::types::{MarketEvent, MarketEventKind, Venue};
@@ -21,6 +22,23 @@ use rust_decimal::Decimal;
 use tokio::sync::Mutex;
 use crate::metrics::prometheus::Metrics;
 
+/// Metadata for a binary prediction market.
+/// Maps a market_id to its YES/NO token IDs and risk parameters.
+#[derive(Debug, Clone)]
+pub struct MarketInfo {
+    pub market_id: String,
+    pub question: String,
+    pub yes_token_id: String,
+    pub no_token_id: String,
+    pub neg_risk: bool,
+}
+
+/// market_id → MarketInfo
+pub type MarketMap = HashMap<String, MarketInfo>;
+
+/// token_id → market_id (reverse lookup)
+pub type TokenToMarket = HashMap<String, String>;
+
 /// Pre-parsed market data to avoid redundant JSON parsing.
 struct EligibleMarket {
     market_id: String,
@@ -31,10 +49,10 @@ struct EligibleMarket {
     liquidity: Option<f64>,
     best_bid: Option<f64>,
     best_ask: Option<f64>,
+    neg_risk: bool,
 }
 
 /// Parse and validate a GammaMarket for CLOB tradability in a single pass.
-/// Returns parsed data to avoid redundant JSON deserialization downstream.
 fn try_parse_eligible(m: &GammaMarket) -> Option<EligibleMarket> {
     if !m.active || m.closed || m.archived {
         return None;
@@ -52,13 +70,14 @@ fn try_parse_eligible(m: &GammaMarket) -> Option<EligibleMarket> {
         })
         .unwrap_or_default();
 
-    // Must have at least 1 non-zero price (liquidity signal)
     if !prices.iter().any(|p| *p > 1e-6) {
         return None;
     }
 
     let ids: Vec<String> = serde_json::from_str(raw_ids).ok()?;
-    if ids.is_empty() {
+
+    // Only binary markets (exactly 2 outcomes) are supported for cross-outcome arbitrage
+    if ids.len() != 2 {
         return None;
     }
 
@@ -79,6 +98,10 @@ fn try_parse_eligible(m: &GammaMarket) -> Option<EligibleMarket> {
         .parse::<f64>()
         .unwrap_or(0.0);
 
+    // neg_risk is on GammaEvent, not GammaMarket — default to false.
+    // For production, fetch events separately or add event-level enrichment.
+    let neg_risk = false;
+
     Some(EligibleMarket {
         market_id: m.id.clone(),
         question: m.question.clone(),
@@ -88,6 +111,7 @@ fn try_parse_eligible(m: &GammaMarket) -> Option<EligibleMarket> {
         liquidity: m.liquidity.as_ref().and_then(|l| l.parse::<f64>().ok()),
         best_bid: m.best_bid,
         best_ask: m.best_ask,
+        neg_risk,
     })
 }
 
@@ -125,10 +149,19 @@ const MAX_WS_RECONNECT_ATTEMPTS: u32 = 10;
 const INITIAL_BACKOFF_MS: u64 = 500;
 const MAX_BACKOFF_MS: u64 = 30_000;
 
-pub async fn run_polymarket_adapter(
+/// Return type from adapter initialization.
+pub struct PolymarketAdapterHandle {
+    pub market_map: MarketMap,
+    pub token_to_market: Arc<TokenToMarket>,
+    pub handle: JoinHandle<anyhow::Result<()>>,
+}
+
+/// Initialize the Polymarket adapter: fetch markets, build lookup tables,
+/// and spawn the adapter task. Returns metadata needed by the strategy engine.
+pub async fn init_polymarket_adapter(
     tx: mpsc::Sender<MarketEvent>,
     metrics: Arc<Mutex<Metrics>>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<PolymarketAdapterHandle> {
     let client = GammaClient::new("https://gamma-api.polymarket.com");
     let clob_client = Arc::new(ClobClient::new("https://clob.polymarket.com"));
 
@@ -142,51 +175,75 @@ pub async fn run_polymarket_adapter(
     let markets = client.get_markets(Some(params)).await?;
     info!(total = markets.len(), "fetched markets from Gamma API");
 
-    // Single-pass parse + filter — no redundant JSON deserialization
     let eligible: Vec<EligibleMarket> = markets
         .iter()
         .filter_map(try_parse_eligible)
         .collect();
 
-    info!(count = eligible.len(), "eligible CLOB-tradable markets");
+    info!(count = eligible.len(), "eligible binary CLOB-tradable markets");
 
     // ── 2. Build lookup tables ─────────────────────────────────────────
     let mut token_ids: Vec<String> = Vec::with_capacity(eligible.len() * 2);
-    let mut clob_to_gamma: HashMap<String, String> =
-        HashMap::with_capacity(eligible.len() * 2);
-    let mut question_map: HashMap<String, String> =
-        HashMap::with_capacity(eligible.len());
+    let mut market_map: MarketMap = HashMap::with_capacity(eligible.len());
+    let mut token_to_market: TokenToMarket = HashMap::with_capacity(eligible.len() * 2);
 
-    for em in &eligible {
+    for em in eligible.iter() {
         debug!(market_id = %em.market_id, volume = em.volume, "eligible market");
+
         for tid in &em.token_ids {
             token_ids.push(tid.clone());
-            clob_to_gamma.insert(tid.clone(), em.market_id.clone());
+            token_to_market.insert(tid.clone(), em.market_id.clone());
         }
-        question_map.insert(em.market_id.clone(), em.question.clone());
+
+        market_map.insert(em.market_id.clone(), MarketInfo {
+            market_id: em.market_id.clone(),
+            question: em.question.clone(),
+            yes_token_id: em.token_ids[0].clone(),
+            no_token_id: em.token_ids[1].clone(),
+            neg_risk: em.neg_risk,
+        });
     }
 
-    // Make lookup table immutable + shareable for the WS loop
-    let clob_to_gamma: Arc<HashMap<String, String>> = Arc::new(clob_to_gamma);
+    // Single Arc shared between the WS loop and the strategy engine
+    let token_to_market = Arc::new(token_to_market);
 
-    // ── 3. Start WS subscription concurrently with initial price fetch ─
-    //    This eliminates the blind window where we miss price changes.
+    // ── 3. Spawn the adapter task ──────────────────────────────────────
+    let handle = tokio::spawn(run_adapter_loop(
+        tx, clob_client, Arc::clone(&token_to_market), eligible, metrics, token_ids,
+    ));
+
+    Ok(PolymarketAdapterHandle {
+        market_map,
+        token_to_market,
+        handle,
+    })
+}
+
+/// Inner adapter loop: starts WS + fetches initial prices.
+async fn run_adapter_loop(
+    tx: mpsc::Sender<MarketEvent>,
+    clob_client: Arc<ClobClient>,
+    token_to_market: Arc<TokenToMarket>,
+    eligible: Vec<EligibleMarket>,
+    metrics: Arc<Mutex<Metrics>>,
+    token_ids: Vec<String>,
+) -> anyhow::Result<()> {
+    // Start WS subscription concurrently with initial price fetch
     let ws_token_ids = token_ids.clone();
     let ws_tx = tx.clone();
-    let ws_lookup = Arc::clone(&clob_to_gamma);
+    let ws_lookup = Arc::clone(&token_to_market);
     let ws_metrics = Arc::clone(&metrics);
 
     let ws_handle = tokio::spawn(async move {
         run_ws_loop(ws_tx, ws_token_ids, ws_lookup, ws_metrics).await;
     });
 
-    // ── 4. Fetch initial CLOB prices with buffered concurrency ─────────
-    //    Up to 10 concurrent HTTP requests instead of sequential.
+    // Fetch initial CLOB prices with buffered concurrency
     let price_futures: Vec<_> = eligible.into_iter().map(|em| {
         let clob = Arc::clone(&clob_client);
         let metrics: Arc<Mutex<Metrics>> = Arc::clone(&metrics);
         let market_id = em.market_id;
-        let first_token = em.token_ids.into_iter().next();
+        let token_ids_pair = em.token_ids;
         let volume = em.volume;
         let last_trade_price = em.last_trade_price;
         let liquidity = em.liquidity;
@@ -195,44 +252,40 @@ pub async fn run_polymarket_adapter(
         let tx = tx.clone();
 
         async move {
-            let Some(token_id) = first_token else {
-                warn!(market_id, "no token IDs found");
-                return;
-            };
+            // Fetch prices for each token in this market
+            for token_id in &token_ids_pair {
+                let start = std::time::Instant::now();
+                let _prices = fetch_prices(&clob, token_id, &market_id).await;
+                let latency_ms = start.elapsed().as_secs_f64() * 1000.0;
 
-            let start = std::time::Instant::now();
+                let event = MarketEvent {
+                    venue: Venue::Polymarket,
+                    kind: MarketEventKind::Heartbeat,
+                    market_id: market_id.clone(),
+                    token_id: token_id.clone(),
+                    ts_exchange_ms: Some(SystemTime::now()),
+                    ts_receive_ms: None,
+                    volume24h: Some(volume),
+                    last_trade_price,
+                    liquidity,
+                    best_bid,
+                    best_ask,
+                };
 
-            // Fetch buy + sell concurrently for this market
-            let _prices = fetch_prices(&clob, &token_id, &market_id).await;
+                {
+                    let mut m = metrics.lock().await;
+                    m.increment_counter("Polymarket", "heartbeat");
+                    m.observe_latency("Polymarket", "heartbeat", latency_ms);
+                }
 
-            let latency_ms = start.elapsed().as_secs_f64() * 1000.0;
-
-            let event = MarketEvent {
-                venue: Venue::Polymarket,
-                kind: MarketEventKind::Heartbeat,
-                market_id,
-                ts_exchange_ms: Some(SystemTime::now()),
-                ts_receive_ms: None,
-                volume24h: Some(volume),
-                last_trade_price,
-                liquidity,
-                best_bid,
-                best_ask,
-            };
-
-            {
-                let mut m = metrics.lock().await;
-                m.increment_counter("Polymarket", "heartbeat");
-                m.observe_latency("Polymarket", "heartbeat", latency_ms);
-            }
-
-            if tx.send(event).await.is_err() {
-                warn!("channel closed while sending heartbeat");
+                if tx.send(event).await.is_err() {
+                    warn!("channel closed while sending heartbeat");
+                    return;
+                }
             }
         }
     }).collect();
 
-    // Buffer up to 10 concurrent price fetches to avoid hammering the API
     futures::stream::iter(price_futures)
         .buffer_unordered(10)
         .for_each(|_| async {})
@@ -240,7 +293,6 @@ pub async fn run_polymarket_adapter(
 
     info!("initial price fetch complete, WebSocket running");
 
-    // Wait for the WS loop to finish (only on disconnect/error)
     if let Err(e) = ws_handle.await {
         error!(error = %e, "WebSocket task panicked");
     }
@@ -255,7 +307,7 @@ const WS_LOG_INTERVAL: Duration = Duration::from_secs(30);
 async fn run_ws_loop(
     tx: mpsc::Sender<MarketEvent>,
     token_ids: Vec<String>,
-    clob_to_gamma: Arc<HashMap<String, String>>,
+    token_to_market: Arc<TokenToMarket>,
     metrics: Arc<Mutex<Metrics>>,
 ) {
     let mut attempt: u32 = 0;
@@ -270,7 +322,7 @@ async fn run_ws_loop(
         let mut stream = match stream_result {
             Ok(s) => {
                 info!("WebSocket connected, subscribed to {} tokens", token_ids.len());
-                attempt = 0; // reset backoff on successful connection
+                attempt = 0;
                 s
             }
             Err(e) => {
@@ -297,29 +349,27 @@ async fn run_ws_loop(
             }
         };
 
-        // Periodic summary counters
         let mut last_log = std::time::Instant::now();
         let mut interval_price_changes: u64 = 0;
         let mut interval_unknown: u64 = 0;
 
-        // Process messages from the stream
         while let Some(message) = stream.next().await {
             match message {
                 Ok(WsEvent::PriceChange(price_change)) => {
-
                     let Some(first_pc) = price_change.price_changes.first() else {
                         continue;
                     };
-                    let Some(market_id) = clob_to_gamma.get(&first_pc.asset_id).cloned() else {
+                    let asset_id = first_pc.asset_id.clone();
+                    let Some(market_id) = token_to_market.get(&asset_id).cloned() else {
                         interval_unknown += 1;
-                        debug!(asset_id = %first_pc.asset_id, "unknown token id from WS");
+                        debug!(asset_id = %asset_id, "unknown token id from WS");
                         continue;
                     };
 
                     interval_price_changes += 1;
 
                     debug!(
-                        asset_id = %first_pc.asset_id,
+                        asset_id = %asset_id,
                         market_id,
                         "received price change"
                     );
@@ -328,6 +378,7 @@ async fn run_ws_loop(
                         venue: Venue::Polymarket,
                         kind: MarketEventKind::PriceChange,
                         market_id,
+                        token_id: asset_id,
                         ts_exchange_ms: None,
                         ts_receive_ms: Some(SystemTime::now()),
                         volume24h: None,
@@ -355,15 +406,12 @@ async fn run_ws_loop(
                         return;
                     }
                 }
-                Ok(_) => {
-                    // Ignore non-price-change events
-                }
+                Ok(_) => {}
                 Err(e) => {
                     warn!(error = %e, "WebSocket stream error");
                 }
             }
 
-            // Periodic info-level summary
             if last_log.elapsed() >= WS_LOG_INTERVAL {
                 info!(
                     price_changes = interval_price_changes,
@@ -376,7 +424,6 @@ async fn run_ws_loop(
             }
         }
 
-        // Stream ended — attempt reconnection
         if attempt >= MAX_WS_RECONNECT_ATTEMPTS {
             error!(
                 attempts = attempt,

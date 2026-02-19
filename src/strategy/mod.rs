@@ -2,10 +2,12 @@ pub mod traits;
 pub mod arbitrage;
 pub mod simple;
 
+use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{info, warn, debug};
+use crate::market_data::adapters::polymarket::{MarketMap, TokenToMarket};
 use crate::state::market_cache::{MarketCache, MarketKey};
-use traits::{Strategy, TradeSignal};
+use traits::{Strategy, TradeSignal, EvalContext};
 
 /// Receives MarketKey notifications on every cache update,
 /// reads the latest state, and runs all registered strategies.
@@ -15,6 +17,8 @@ pub async fn run_strategy_engine(
     cache: MarketCache,
     strategies: Vec<Box<dyn Strategy>>,
     signal_tx: mpsc::Sender<TradeSignal>,
+    market_map: Arc<MarketMap>,
+    token_to_market: Arc<TokenToMarket>,
 ) {
     info!(
         strategy_count = strategies.len(),
@@ -27,12 +31,21 @@ pub async fn run_strategy_engine(
             continue;
         };
 
+        let ctx = EvalContext {
+            updated_key: &key,
+            updated_state: &state,
+            cache: &cache,
+            market_map: &market_map,
+            token_to_market: &token_to_market,
+        };
+
         for strategy in &strategies {
-            if let Some(signal) = strategy.evaluate(&key, &state) {
+            if let Some(signal) = strategy.evaluate(&ctx) {
                 info!(
                     strategy = signal.strategy_name,
                     market_id = %signal.market_id,
                     edge = %signal.edge,
+                    legs = signal.legs.len(),
                     "trade signal generated"
                 );
 
@@ -45,23 +58,4 @@ pub async fn run_strategy_engine(
     }
 
     info!("notification channel closed, strategy engine shutting down");
-}
-
-/// Logs all trade signals with end-to-end latency.
-/// Placeholder for the execution bridge.
-pub async fn run_signal_logger(mut signal_rx: mpsc::Receiver<TradeSignal>) {
-    while let Some(signal) = signal_rx.recv().await {
-        let latency = signal.generated_at.elapsed();
-        info!(
-            strategy = signal.strategy_name,
-            venue = ?signal.venue,
-            market_id = %signal.market_id,
-            side = ?signal.side,
-            edge = %signal.edge,
-            bid = ?signal.observed_bid,
-            ask = ?signal.observed_ask,
-            latency_us = latency.as_micros(),
-            "TRADE SIGNAL"
-        );
-    }
 }

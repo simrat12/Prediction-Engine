@@ -1,33 +1,49 @@
 use crate::market_data::types::{Venue, Side};
+use crate::market_data::adapters::polymarket::{MarketMap, TokenToMarket};
 use crate::state::market::MarketState;
-use crate::state::market_cache::MarketKey;
+use crate::state::market_cache::{MarketCache, MarketKey};
 use std::time::Instant;
 
+/// A single leg of a multi-leg trade signal.
+#[derive(Debug, Clone)]
+pub struct SignalLeg {
+    pub token_id: String,
+    pub side: Side,
+    pub price: f64,
+    pub size: f64,
+}
+
 /// Output of a strategy evaluation — a signal, not an order.
-/// The execution layer decides whether and how to act on it.
+/// Supports multi-leg signals for cross-outcome arbitrage.
 #[derive(Debug, Clone)]
 pub struct TradeSignal {
     pub strategy_name: &'static str,
     pub venue: Venue,
     pub market_id: String,
-    pub side: Side,
-    /// Expected edge as a fraction (e.g. 0.02 = 2%).
+    pub legs: Vec<SignalLeg>,
     pub edge: f64,
-    pub observed_bid: Option<f64>,
-    pub observed_ask: Option<f64>,
-    /// Monotonic timestamp of when the signal was generated.
     pub generated_at: Instant,
+}
+
+/// Context provided to strategies on each cache update.
+/// Gives strategies access to the full cache and market metadata
+/// so they can read cross-outcome prices.
+pub struct EvalContext<'a> {
+    pub updated_key: &'a MarketKey,
+    pub updated_state: &'a MarketState,
+    pub cache: &'a MarketCache,
+    pub market_map: &'a MarketMap,
+    pub token_to_market: &'a TokenToMarket,
 }
 
 /// Trait that all strategies implement.
 ///
 /// Kept synchronous and infallible by design:
 /// strategies read from an immutable snapshot, not I/O.
-/// A strategy that cannot produce a signal returns None.
 pub trait Strategy: Send + Sync {
     fn name(&self) -> &'static str;
 
     /// Evaluate against the latest market state for the given key.
     /// Returns Some(TradeSignal) if an opportunity is detected.
-    fn evaluate(&self, key: &MarketKey, state: &MarketState) -> Option<TradeSignal>;
+    fn evaluate(&self, ctx: &EvalContext) -> Option<TradeSignal>;
 }

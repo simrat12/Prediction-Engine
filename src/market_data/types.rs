@@ -27,6 +27,7 @@ pub struct MarketEvent {
     pub venue: Venue,
     pub kind: MarketEventKind,
     pub market_id: String,
+    pub token_id: String,
     pub ts_exchange_ms: Option<SystemTime>,
     pub ts_receive_ms: Option<SystemTime>,
     pub volume24h: Option<f64>,

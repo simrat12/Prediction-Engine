@@ -1,26 +1,54 @@
+use async_trait::async_trait;
 use crate::market_data::types::{Venue, Side};
+use std::time::Instant;
 
+#[derive(Debug, Clone)]
+pub struct OrderLeg {
+    pub token_id: String,
+    pub side: Side,
+    pub price: f64,
+    pub size: f64,
+}
 
+#[derive(Debug, Clone)]
 pub struct ExecutionIntent {
-    pub Venue: Venue,
-    pub MarketId: String,
-    pub Side: Side,
-    pub Size: u64,
-    pub limit_price: Option<u64>
+    pub venue: Venue,
+    pub market_id: String,
+    pub strategy_name: &'static str,
+    pub legs: Vec<OrderLeg>,
+    pub edge: f64,
+    pub neg_risk: bool,
+    pub created_at: Instant,
 }
 
+#[derive(Debug, Clone)]
+pub enum LegFillStatus {
+    Filled {
+        order_id: String,
+        avg_price: f64,
+        filled_size: f64,
+    },
+    Rejected {
+        reason: String,
+    },
+    NotAttempted,
+}
+
+#[derive(Debug, Clone)]
 pub struct ExecutionReport {
-    pub order_id: u64,
-    pub Venue: Venue,
-    pub filled_size: Option<u64>,
-    pub avg_price: Option<u64>,
-    pub fees: Option<u64>,
-    pub status: Status,
-    pub timestamp: Duration
+    pub market_id: String,
+    pub strategy_name: &'static str,
+    pub leg_results: Vec<LegFillStatus>,
+    pub completed_at: Instant,
 }
 
-pub trait ExecutionEngine {
-    pub fn submit(intent: ExecutionIntent) -> ExecutionReport;
-    pub fn cancel(order_id: u64) -> ExecutionReport;
-    pub fn status(order_id: u64) -> ExecutionReport;
+impl ExecutionReport {
+    pub fn fully_filled(&self) -> bool {
+        self.leg_results.iter().all(|r| matches!(r, LegFillStatus::Filled { .. }))
+    }
+}
+
+#[async_trait]
+pub trait ExecutionEngine: Send + Sync {
+    async fn execute(&self, intent: ExecutionIntent) -> ExecutionReport;
 }

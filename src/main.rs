@@ -16,6 +16,8 @@ use prediction_engine::metrics::prometheus::Metrics;
 use prediction_engine::strategy;
 use prediction_engine::strategy::traits::TradeSignal;
 use prediction_engine::strategy::arbitrage::ArbitrageStrategy;
+use prediction_engine::execution;
+use prediction_engine::execution::paper::PaperExecutor;
 
 const ADAPTER_CHANNEL_BUFFER: usize = 4_096;
 const NOTIFY_CHANNEL_BUFFER: usize = 512;
@@ -36,30 +38,43 @@ async fn main() -> Result<()> {
 
     let (tx, rx) = mpsc::channel(ADAPTER_CHANNEL_BUFFER);
 
-    // DashMap-backed cache — cheap to clone (just an Arc bump)
     let cache = MarketCache::new();
-
     let metrics = Arc::new(Mutex::new(Metrics::new()));
+
+    // Initialize adapter — fetches markets and returns metadata + spawned handle
+    let pm = polymarket::init_polymarket_adapter(tx, Arc::clone(&metrics)).await?;
+
+    let market_map = Arc::new(pm.market_map);
+    let token_to_market = pm.token_to_market; // already Arc'd by the adapter
+
+    info!(
+        markets = market_map.len(),
+        tokens = token_to_market.len(),
+        "market metadata loaded"
+    );
 
     // MarketWorker → StrategyEngine notification channel
     let (notify_tx, notify_rx) = mpsc::channel::<MarketKey>(NOTIFY_CHANNEL_BUFFER);
 
-    // StrategyEngine → signal consumer channel
+    // StrategyEngine → ExecutionBridge signal channel
     let (signal_tx, signal_rx) = mpsc::channel::<TradeSignal>(SIGNAL_CHANNEL_BUFFER);
 
     let strategies: Vec<Box<dyn strategy::traits::Strategy>> = vec![
-        Box::new(ArbitrageStrategy::new(0.01)),
+        Box::new(ArbitrageStrategy::new(0.01, 5.0)),
     ];
 
-    let pm_handle = tokio::spawn(polymarket::run_polymarket_adapter(tx, Arc::clone(&metrics)));
     let router_handle = tokio::spawn(router::run_router(rx, cache.clone(), notify_tx));
     let strategy_handle = tokio::spawn(strategy::run_strategy_engine(
         notify_rx, cache.clone(), strategies, signal_tx,
+        Arc::clone(&market_map), Arc::clone(&token_to_market),
     ));
-    let signal_handle = tokio::spawn(strategy::run_signal_logger(signal_rx));
+    let exec_handle = tokio::spawn(execution::run_execution_bridge(
+        signal_rx,
+        Box::new(PaperExecutor::new()),
+    ));
 
     tokio::select! {
-        res = pm_handle => {
+        res = pm.handle => {
             match res {
                 Ok(Ok(())) => warn!("polymarket adapter exited"),
                 Ok(Err(err)) => warn!(error = %err, "polymarket adapter returned error"),
@@ -79,10 +94,10 @@ async fn main() -> Result<()> {
                 Err(err) => warn!(error = %err, "strategy engine task panicked"),
             }
         }
-        res = signal_handle => {
+        res = exec_handle => {
             match res {
-                Ok(()) => warn!("signal logger exited"),
-                Err(err) => warn!(error = %err, "signal logger task panicked"),
+                Ok(()) => warn!("execution bridge exited"),
+                Err(err) => warn!(error = %err, "execution bridge task panicked"),
             }
         }
         _ = tokio::signal::ctrl_c() => {

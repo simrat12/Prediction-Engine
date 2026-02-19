@@ -6,7 +6,7 @@ use std::sync::Arc;
 #[derive(Eq, Hash, PartialEq, Clone, Debug)]
 pub struct MarketKey(
     pub Venue,
-    pub String, // market_id
+    pub String, // token_id
 );
 
 /// Thread-safe market cache backed by DashMap.

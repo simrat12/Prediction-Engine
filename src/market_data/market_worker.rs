@@ -12,7 +12,7 @@ pub async fn run_market_worker(
     notify_tx: mpsc::Sender<MarketKey>,
 ) -> anyhow::Result<()> {
     while let Some(event) = rx.recv().await {
-        let key = MarketKey(event.venue.clone(), event.market_id.clone());
+        let key = MarketKey(event.venue.clone(), event.token_id.clone());
 
         let state = MarketState {
             best_bid: event.best_bid,
