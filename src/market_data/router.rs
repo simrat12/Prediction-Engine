@@ -5,21 +5,23 @@ use tracing::{info, warn};
 use std::collections::HashMap;
 use crate::market_data::types::{MarketEvent, Venue};
 use crate::market_data::market_worker::run_market_worker;
-use crate::state::market_cache::MarketCache;
+use crate::state::market_cache::{MarketCache, MarketKey};
 
 /// Per-venue lane buffer size.
-/// Larger than the old 100 to absorb bursts from the WebSocket
-/// without back-pressuring the adapter and stalling WS reads.
 const LANE_BUFFER: usize = 1_024;
 
-pub async fn run_router(mut rx: mpsc::Receiver<MarketEvent>, handle: MarketCache) -> anyhow::Result<()> {
+pub async fn run_router(
+    mut rx: mpsc::Receiver<MarketEvent>,
+    handle: MarketCache,
+    notify_tx: mpsc::Sender<MarketKey>,
+) -> anyhow::Result<()> {
     let mut lanes: HashMap<Venue, mpsc::Sender<MarketEvent>> = HashMap::new();
 
     while let Some(event) = rx.recv().await {
         if !lanes.contains_key(&event.venue) {
             let (lane_tx, lane_rx) = mpsc::channel(LANE_BUFFER);
             info!(venue = ?event.venue, "spawning market worker");
-            tokio::spawn(run_market_worker(lane_rx, handle.clone()));
+            tokio::spawn(run_market_worker(lane_rx, handle.clone(), notify_tx.clone()));
             lanes.insert(event.venue.clone(), lane_tx);
         }
 

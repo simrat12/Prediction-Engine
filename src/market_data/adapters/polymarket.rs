@@ -118,15 +118,6 @@ async fn fetch_prices(
         }
     };
 
-    if buy_price + sell_price > Decimal::from(1) {
-        info!(
-            market_id,
-            %buy_price,
-            %sell_price,
-            "arbitrage opportunity detected"
-        );
-    }
-
     Some((buy_price, sell_price))
 }
 
