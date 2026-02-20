@@ -20,3 +20,4 @@ dashmap = "6"
 futures = "0.3"
 metrics = "=0.22.4"  # Pinning to avoid breaking changes
 metrics-exporter-prometheus = "=0.14.0"
+async-trait = "0.1"
