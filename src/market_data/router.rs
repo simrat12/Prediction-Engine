@@ -4,8 +4,8 @@ use tokio::sync::mpsc;
 use tracing::{info, warn};
 use std::collections::HashMap;
 use crate::market_data::types::{MarketEvent, Venue};
-use crate::market_data::market_worker::run_market_worker;
-use crate::state::market_cache::{MarketCache, MarketKey};
+use crate::market_data::market_worker::{run_market_worker, Notification};
+use crate::state::market_cache::MarketCache;
 
 /// Per-venue lane buffer size.
 const LANE_BUFFER: usize = 1_024;
@@ -13,7 +13,7 @@ const LANE_BUFFER: usize = 1_024;
 pub async fn run_router(
     mut rx: mpsc::Receiver<MarketEvent>,
     handle: MarketCache,
-    notify_tx: mpsc::Sender<MarketKey>,
+    notify_tx: mpsc::Sender<Notification>,
 ) -> anyhow::Result<()> {
     let mut lanes: HashMap<Venue, mpsc::Sender<MarketEvent>> = HashMap::new();
 

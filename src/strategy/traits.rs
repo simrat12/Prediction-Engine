@@ -23,6 +23,9 @@ pub struct TradeSignal {
     pub legs: Vec<SignalLeg>,
     pub edge: f64,
     pub generated_at: Instant,
+    /// Monotonic timestamp of when the triggering WS event was received.
+    /// Used to measure end-to-end pipeline latency.
+    pub ws_received_at: Option<Instant>,
 }
 
 /// Context provided to strategies on each cache update.
@@ -34,6 +37,8 @@ pub struct EvalContext<'a> {
     pub cache: &'a MarketCache,
     pub market_map: &'a MarketMap,
     pub token_to_market: &'a TokenToMarket,
+    /// When the triggering WS event was received (monotonic).
+    pub ws_received_at: Option<Instant>,
 }
 
 /// Trait that all strategies implement.

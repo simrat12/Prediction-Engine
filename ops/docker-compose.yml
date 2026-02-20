@@ -1,4 +1,15 @@
 services:
+  engine:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: prediction-engine
+    ports:
+      - "9000:9000"
+    environment:
+      - RUST_LOG=info
+    restart: unless-stopped
+
   prometheus:
     image: prom/prometheus
     container_name: prediction-prometheus
@@ -6,6 +17,8 @@ services:
       - "9090:9090"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    depends_on:
+      - engine
 
   grafana:
     image: grafana/grafana

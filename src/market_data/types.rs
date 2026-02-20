@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use std::time::SystemTime;
+use std::time::{Instant, SystemTime};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Venue {
@@ -22,7 +22,7 @@ pub enum MarketEventKind {
     PriceChange
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct MarketEvent {
     pub venue: Venue,
     pub kind: MarketEventKind,
@@ -30,6 +30,8 @@ pub struct MarketEvent {
     pub token_id: String,
     pub ts_exchange_ms: Option<SystemTime>,
     pub ts_receive_ms: Option<SystemTime>,
+    /// Monotonic receive timestamp for latency measurement.
+    pub received_at: Instant,
     pub volume24h: Option<f64>,
     pub last_trade_price: Option<f64>,
     pub liquidity: Option<f64>,

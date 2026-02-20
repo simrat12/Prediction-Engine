@@ -6,14 +6,15 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{info, warn, debug};
 use crate::market_data::adapters::polymarket::{MarketMap, TokenToMarket};
-use crate::state::market_cache::{MarketCache, MarketKey};
+use crate::market_data::market_worker::Notification;
+use crate::metrics::prometheus::{record_signal, record_signal_edge};
+use crate::state::market_cache::MarketCache;
 use traits::{Strategy, TradeSignal, EvalContext};
 
-/// Receives MarketKey notifications on every cache update,
+/// Receives Notification (MarketKey + ws_received_at) on every cache update,
 /// reads the latest state, and runs all registered strategies.
-/// Signals are forwarded to signal_tx for downstream consumption.
 pub async fn run_strategy_engine(
-    mut notify_rx: mpsc::Receiver<MarketKey>,
+    mut notify_rx: mpsc::Receiver<Notification>,
     cache: MarketCache,
     strategies: Vec<Box<dyn Strategy>>,
     signal_tx: mpsc::Sender<TradeSignal>,
@@ -25,7 +26,7 @@ pub async fn run_strategy_engine(
         "strategy engine started"
     );
 
-    while let Some(key) = notify_rx.recv().await {
+    while let Some((key, ws_received_at)) = notify_rx.recv().await {
         let Some(state) = cache.get_market_state(&key) else {
             debug!(?key, "cache miss for notified key");
             continue;
@@ -37,10 +38,14 @@ pub async fn run_strategy_engine(
             cache: &cache,
             market_map: &market_map,
             token_to_market: &token_to_market,
+            ws_received_at: Some(ws_received_at),
         };
 
         for strategy in &strategies {
             if let Some(signal) = strategy.evaluate(&ctx) {
+                record_signal(signal.strategy_name, &format!("{:?}", signal.venue));
+                record_signal_edge(signal.strategy_name, signal.edge);
+
                 info!(
                     strategy = signal.strategy_name,
                     market_id = %signal.market_id,

@@ -66,6 +66,7 @@ impl Strategy for ArbitrageStrategy {
                 ],
                 edge: sell_edge,
                 generated_at: Instant::now(),
+                ws_received_at: ctx.ws_received_at,
             });
         }
 
@@ -92,6 +93,7 @@ impl Strategy for ArbitrageStrategy {
                 ],
                 edge: buy_edge,
                 generated_at: Instant::now(),
+                ws_received_at: ctx.ws_received_at,
             });
         }
 

@@ -7,12 +7,10 @@ pub use anyhow::Result;
 pub use tracing::{info, warn};
 use tokio::sync::mpsc;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use prediction_engine::market_data::router;
-use prediction_engine::market_data::types::Venue;
-use prediction_engine::state::market_cache::{MarketCache, MarketKey};
+use prediction_engine::market_data::market_worker::Notification;
+use prediction_engine::state::market_cache::MarketCache;
 use prediction_engine::market_data::adapters::polymarket;
-use prediction_engine::metrics::prometheus::Metrics;
 use prediction_engine::strategy;
 use prediction_engine::strategy::traits::TradeSignal;
 use prediction_engine::strategy::arbitrage::ArbitrageStrategy;
@@ -39,13 +37,12 @@ async fn main() -> Result<()> {
     let (tx, rx) = mpsc::channel(ADAPTER_CHANNEL_BUFFER);
 
     let cache = MarketCache::new();
-    let metrics = Arc::new(Mutex::new(Metrics::new()));
 
     // Initialize adapter — fetches markets and returns metadata + spawned handle
-    let pm = polymarket::init_polymarket_adapter(tx, Arc::clone(&metrics)).await?;
+    let pm = polymarket::init_polymarket_adapter(tx).await?;
 
     let market_map = Arc::new(pm.market_map);
-    let token_to_market = pm.token_to_market; // already Arc'd by the adapter
+    let token_to_market = pm.token_to_market;
 
     info!(
         markets = market_map.len(),
@@ -54,7 +51,7 @@ async fn main() -> Result<()> {
     );
 
     // MarketWorker → StrategyEngine notification channel
-    let (notify_tx, notify_rx) = mpsc::channel::<MarketKey>(NOTIFY_CHANNEL_BUFFER);
+    let (notify_tx, notify_rx) = mpsc::channel::<Notification>(NOTIFY_CHANNEL_BUFFER);
 
     // StrategyEngine → ExecutionBridge signal channel
     let (signal_tx, signal_rx) = mpsc::channel::<TradeSignal>(SIGNAL_CHANNEL_BUFFER);
@@ -71,6 +68,7 @@ async fn main() -> Result<()> {
     let exec_handle = tokio::spawn(execution::run_execution_bridge(
         signal_rx,
         Box::new(PaperExecutor::new()),
+        "paper",
     ));
 
     tokio::select! {
