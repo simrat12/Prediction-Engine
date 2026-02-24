@@ -2,6 +2,7 @@ use crate::market_data::types::Side;
 use crate::state::market_cache::MarketKey;
 use super::traits::{Strategy, TradeSignal, SignalLeg, EvalContext};
 use std::time::Instant;
+use tracing::info;
 
 /// Detects cross-outcome arbitrage on binary prediction markets.
 ///
@@ -46,6 +47,15 @@ impl Strategy for ArbitrageStrategy {
         // Sell arb: sell YES + sell NO when combined bids exceed 1.0
         let sell_edge = yes_bid + no_bid - 1.0;
         if sell_edge >= self.min_edge {
+            info!(
+                market_id = %market_id,
+                yes_bid, no_bid, yes_ask, no_ask,
+                edge = sell_edge,
+                arb_type = "sell",
+                yes_token = %info.yes_token_id,
+                no_token = %info.no_token_id,
+                "arb detected"
+            );
             return Some(TradeSignal {
                 strategy_name: self.name(),
                 venue: venue.clone(),
@@ -73,6 +83,15 @@ impl Strategy for ArbitrageStrategy {
         // Buy arb: buy YES + buy NO when combined asks are below 1.0
         let buy_edge = 1.0 - (yes_ask + no_ask);
         if buy_edge >= self.min_edge {
+            info!(
+                market_id = %market_id,
+                yes_bid, no_bid, yes_ask, no_ask,
+                edge = buy_edge,
+                arb_type = "buy",
+                yes_token = %info.yes_token_id,
+                no_token = %info.no_token_id,
+                "arb detected"
+            );
             return Some(TradeSignal {
                 strategy_name: self.name(),
                 venue: venue.clone(),
