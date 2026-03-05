@@ -1,6 +1,7 @@
 pub mod traits;
 pub mod arbitrage;
 pub mod simple;
+pub mod market_maker;
 
 use std::sync::Arc;
 use tokio::sync::mpsc;

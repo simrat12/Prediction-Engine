@@ -58,6 +58,15 @@ async fn main() -> Result<()> {
 
     let strategies: Vec<Box<dyn strategy::traits::Strategy>> = vec![
         Box::new(ArbitrageStrategy::new(0.01, 5.0)),
+        // Uncomment to enable Avellaneda-Stoikov market-making strategy:
+        // Box::new(prediction_engine::strategy::market_maker::MarketMakerStrategy::new(
+        //     0.05,   // gamma: risk aversion
+        //     0.20,   // sigma_b: belief volatility (logit space)
+        //     0.25,   // tau: time to resolution (~3 months)
+        //     1.5,    // k: liquidity / order-arrival intensity
+        //     0.02,   // min_edge: 2 cent minimum
+        //     5.0,    // default_size: contracts
+        // )),
     ];
 
     let router_handle = tokio::spawn(router::run_router(rx, cache.clone(), notify_tx));

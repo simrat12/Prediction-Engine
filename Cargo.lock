@@ -2314,6 +2314,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7edddbd0b52d732b21ad9a5fab5c704c14cd949e5e9a1ec5929a24fded1b904c"
 
 [[package]]
+name = "polymarket-kernel"
+version = "0.2.0"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "polymarket-rs"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2376,6 +2383,7 @@ dependencies = [
  "metrics",
  "metrics-exporter-prometheus",
  "once_cell",
+ "polymarket-kernel",
  "polymarket-rs",
  "reqwest 0.12.28",
  "rust_decimal",
