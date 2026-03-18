@@ -56,8 +56,12 @@ async fn main() -> Result<()> {
     // StrategyEngine → ExecutionBridge signal channel
     let (signal_tx, signal_rx) = mpsc::channel::<TradeSignal>(SIGNAL_CHANNEL_BUFFER);
 
+    // min_edge = 0.025 (2.5%): Polymarket charges ~1% taker fee per leg (2 legs = 2%
+    // total). A 2.5% edge threshold ensures we're profitable net of fees, with a small
+    // buffer for slippage. Real edges from the CLOB are typically 0.002–0.004 (below
+    // fees), so signals should be rare and only fire on genuine dislocations.
     let strategies: Vec<Box<dyn strategy::traits::Strategy>> = vec![
-        Box::new(ArbitrageStrategy::new(0.01, 5.0)),
+        Box::new(ArbitrageStrategy::new(0.025, 5.0)),
     ];
 
     let router_handle = tokio::spawn(router::run_router(rx, cache.clone(), notify_tx));

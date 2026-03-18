@@ -21,3 +21,7 @@ futures = "0.3"
 metrics = "=0.22.4"  # Pinning to avoid breaking changes
 metrics-exporter-prometheus = "=0.14.0"
 async-trait = "0.1"
+
+# Use our local patched polymarket-rs with best_bid/best_ask in PriceChange
+[patch.crates-io]
+polymarket-rs = { path = "deps/polymarket-rs" }
