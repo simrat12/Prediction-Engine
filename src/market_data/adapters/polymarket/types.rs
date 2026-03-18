@@ -64,8 +64,17 @@ pub(super) fn try_parse_eligible(m: &GammaMarket) -> Option<EligibleMarket> {
         .map(|v| v.into_iter().filter_map(|p| p.parse::<f64>().ok()).collect())
         .unwrap_or_default();
 
-    if !prices.iter().any(|p| *p > 1e-6) {
-        return None; // market has no meaningful price — likely unresolvable
+    // Require exactly 2 outcome prices that together cover the probability space.
+    // Multi-outcome markets can sneak through `ids.len() == 2` if the Gamma API
+    // happens to return only 2 tokens (e.g. two ~19% legs of a 5-way market).
+    // A genuine binary YES/NO pair always sums to ~1.0; anything well below that
+    // (e.g. 0.19 + 0.19 = 0.38) is two independent outcomes, not complements.
+    if prices.len() != 2 {
+        return None;
+    }
+    let price_sum = prices[0] + prices[1];
+    if !(0.85..=1.15).contains(&price_sum) {
+        return None; // not complementary YES/NO outcomes
     }
 
     // clob_token_ids is also a JSON array string
